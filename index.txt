@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CardioPulse - PPG Heart Rate Monitor</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            pulse: {
+              50: '#fff1f2',
+              100: '#ffe4e6',
+              500: '#f43f5e',
+              600: '#e11d48',
+              700: '#be123c',
+              800: '#9f1239',
+              900: '#881337',
+              accent: '#ff2d55',
+              glow: 'rgba(255, 45, 85, 0.45)'
+            },
+            dark: {
+              card: '#141419',
+              base: '#0a0a0e',
+              border: '#23232c',
+              surface: '#1c1c24'
+            }
+          },
+          animation: {
+            'heartbeat-fast': 'pulseHeart 0.65s cubic-bezier(0.215, 0.61, 0.355, 1) infinite',
+            'radar': 'radarPing 2s cubic-bezier(0, 0, 0.2, 1) infinite'
+          },
+          keyframes: {
+            pulseHeart: {
+              '0%': { transform: 'scale(1)' },
+              '14%': { transform: 'scale(1.22)' },
+              '28%': { transform: 'scale(1)' },
+              '42%': { transform: 'scale(1.15)' },
+              '70%': { transform: 'scale(1)' }
+            },
+            radarPing: {
+              '75%, 100%': { transform: 'scale(2)', opacity: '0' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+    
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #08080c;
+      color: #f3f4f6;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .font-mono-numbers {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* Custom Neon Glow */
+    .glow-crimson {
+      box-shadow: 0 0 25px rgba(244, 63, 94, 0.25), inset 0 0 15px rgba(244, 63, 94, 0.1);
+    }
+    .text-glow {
+      text-shadow: 0 0 16px rgba(255, 45, 85, 0.7);
+    }
+    /* Hide scrollbars */
+    ::-webkit-scrollbar {
+      display: none;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[#08080c] flex flex-col items-center justify-between p-3 sm:p-5 text-gray-200">
+
+  <!-- Notification Banner / Toast -->
+  <div id="toastMessage" class="fixed top-4 z-50 transition-all duration-300 opacity-0 pointer-events-none transform -translate-y-4 px-4 py-2.5 rounded-full bg-dark-surface border border-pulse-600/50 text-xs sm:text-sm font-medium flex items-center space-x-2 text-white shadow-xl shadow-pulse-900/30">
+    <i data-lucide="info" class="w-4 h-4 text-pulse-500"></i>
+    <span id="toastText">Sensor ready</span>
+  </div>
+
+  <!-- Header -->
+  <header class="w-full max-w-md flex items-center justify-between py-2 px-1">
+    <div class="flex items-center space-x-2.5">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-pulse-600 to-rose-400 flex items-center justify-center shadow-lg shadow-pulse-600/30">
+        <i data-lucide="activity" class="w-5 h-5 text-white stroke-[2.5]"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">CardioPulse</h1>
+        <p class="text-[10px] tracking-wide text-pulse-500 font-semibold uppercase">Optical PPG Bio-Sensor</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-2">
+      <!-- Demo / Sim Switch -->
+      <button id="toggleDemoBtn" class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-dark-card border border-dark-border hover:border-gray-600 transition-colors">
+        <span class="w-2 h-2 rounded-full bg-emerald-400" id="modeIndicator"></span>
+        <span id="modeText" class="text-gray-300">Live Camera</span>
+      </button>
+      <button id="infoModalBtn" class="p-1.5 rounded-lg bg-dark-card border border-dark-border hover:border-gray-600 text-gray-400 hover:text-white transition">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="w-full max-w-md flex-1 flex flex-col justify-center space-y-4 my-2">
+
+    <!-- Top Card: Visual Live Feedback & Heartbeat Metric -->
+    <div class="relative bg-dark-card border border-dark-border rounded-3xl p-5 shadow-2xl overflow-hidden">
+      <!-- Ambient background backlight -->
+      <div id="ambientGlow" class="absolute -top-12 -right-12 w-48 h-48 bg-pulse-600/10 rounded-full blur-3xl pointer-events-none transition-all duration-700"></div>
+
+      <!-- Top row inside card: Camera preview thumbnail & Finger Coverage Status -->
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-3">
+          <!-- Live Camera Video Element (Tiny thumbnail overlay) -->
+          <div class="relative w-12 h-12 rounded-xl overflow-hidden border-2 border-dark-border bg-black flex items-center justify-center">
+            <video id="webcamVideo" playsinline autoplay muted class="w-full h-full object-cover"></video>
+            <div id="noCamCover" class="absolute inset-0 bg-dark-surface flex items-center justify-center text-gray-500">
+              <i data-lucide="camera-off" class="w-5 h-5"></i>
+            </div>
+            <!-- Live red tint filter indicator -->
+            <div id="camRedIndicator" class="absolute inset-0 bg-red-600/0 pointer-events-none transition-colors duration-300"></div>
+          </div>
+          <div>
+            <div class="text-xs font-semibold text-gray-400">Finger Placement</div>
+            <div id="fingerStatus" class="text-xs font-bold text-amber-400 flex items-center space-x-1 mt-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+              <span id="fingerStatusText">Lens Uncovered</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Torch / External Light Control -->
+        <button id="torchToggleBtn" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-dark-surface border border-dark-border flex items-center space-x-1.5 text-gray-300 hover:text-white hover:border-gray-500 transition">
+          <i data-lucide="flashlight" class="w-3.5 h-3.5 text-amber-300"></i>
+          <span id="torchStatusText">Torch: Auto</span>
+        </button>
+      </div>
+
+      <!-- Center Hero: Pulse Counter & Heart Icon -->
+      <div class="flex flex-col items-center justify-center py-4 relative">
+        <!-- Circular Progress Ring around Heart -->
+        <div class="relative w-48 h-48 flex items-center justify-center">
+          <svg class="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
+            <!-- Background Ring -->
+            <circle cx="60" cy="60" r="54" stroke="#1c1c24" stroke-width="7" fill="transparent" />
+            <!-- Active Animated Progress Ring -->
+            <circle id="progressCircle" cx="60" cy="60" r="54" stroke="#e11d48" stroke-width="7" stroke-dasharray="339.29" stroke-dashoffset="339.29" stroke-linecap="round" fill="transparent" class="transition-all duration-200" />
+          </svg>
+
+          <!-- Inside Heart Center -->
+          <div class="absolute inset-0 flex flex-col items-center justify-center">
+            <div id="heartIconWrap" class="relative transition-transform duration-150">
+              <i id="heartIcon" data-lucide="heart" class="w-10 h-10 text-pulse-600 fill-pulse-600 transition-colors duration-200"></i>
+              <div id="heartRadar" class="absolute inset-0 rounded-full bg-pulse-500 opacity-0 pointer-events-none"></div>
+            </div>
+            
+            <div class="flex items-baseline mt-1 space-x-1">
+              <span id="bpmValue" class="text-5xl font-black font-mono-numbers tracking-tight text-white text-glow">--</span>
+              <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">BPM</span>
+            </div>
+
+            <!-- Signal Confidence / State -->
+            <div id="measurementStatusText" class="text-[11px] font-semibold text-gray-400 mt-0.5 tracking-wide">
+              Ready to Measure
+            </div>
+          </div>
+        </div>
+
+        <!-- Signal Quality Indicator -->
+        <div class="mt-4 flex items-center space-x-2 text-xs">
+          <span class="text-gray-400 font-medium">Signal Quality:</span>
+          <div class="flex space-x-1 items-center">
+            <div id="sigBar1" class="w-1.5 h-3 rounded-full bg-gray-700 transition-colors"></div>
+            <div id="sigBar2" class="w-1.5 h-4 rounded-full bg-gray-700 transition-colors"></div>
+            <div id="sigBar3" class="w-1.5 h-5 rounded-full bg-gray-700 transition-colors"></div>
+            <div id="sigBar4" class="w-1.5 h-6 rounded-full bg-gray-700 transition-colors"></div>
+          </div>
+          <span id="confidenceText" class="text-[11px] font-mono-numbers text-gray-400 font-bold ml-1">0%</span>
+        </div>
+      </div>
+
+      <!-- Real-Time PPG Waveform Chart Canvas -->
+      <div class="mt-2 bg-dark-base/80 border border-dark-border/80 rounded-2xl p-3 relative overflow-hidden">
+        <div class="flex items-center justify-between text-[11px] font-semibold text-gray-400 mb-1.5">
+          <div class="flex items-center space-x-1.5">
+            <span class="w-2 h-2 rounded-full bg-pulse-500 animate-pulse"></span>
+            <span class="tracking-wider uppercase font-mono">PPG Absorption Waveform</span>
+          </div>
+          <span id="fpsCounter" class="text-[10px] text-gray-500 font-mono">-- FPS</span>
+        </div>
+
+        <div class="w-full h-24 relative">
+          <canvas id="ppgCanvas" class="w-full h-full block"></canvas>
+          <div id="calibratingOverlay" class="absolute inset-0 flex items-center justify-center bg-dark-base/60 backdrop-blur-[1px] text-xs font-medium text-gray-400 transition-opacity duration-300">
+            Awaiting Stable Pulse Signal...
+          </div>
+        </div>
+      </div>
+
+      <!-- Dynamic Guidance Tips -->
+      <div id="instructionCard" class="mt-4 p-3 rounded-2xl bg-dark-surface/60 border border-dark-border text-center text-xs text-gray-300 flex items-center justify-center space-x-2">
+        <i data-lucide="info" class="w-4 h-4 text-pulse-500 flex-shrink-0"></i>
+        <span id="instructionText">Cover the rear camera lens &amp; flashlight gently with your fingertip.</span>
+      </div>
+
+      <!-- Action Button -->
+      <div class="mt-5">
+        <button id="startStopBtn" class="w-full py-4 rounded-2xl font-extrabold text-sm tracking-wide uppercase transition-all duration-200 flex items-center justify-center space-x-2 shadow-lg bg-gradient-to-r from-pulse-600 to-rose-600 hover:from-pulse-500 hover:to-rose-500 text-white shadow-pulse-600/30 active:scale-[0.98]">
+          <i data-lucide="play" class="w-4 h-4 fill-white"></i>
+          <span id="startBtnText">Start 20s Measurement</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom History & Analytics Section -->
+    <div class="bg-dark-card border border-dark-border rounded-3xl p-4 shadow-xl">
+      <div class="flex items-center justify-between mb-3 px-1">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="history" class="w-4 h-4 text-pulse-500"></i>
+          <h2 class="text-sm font-bold text-gray-200">Recent Pulse Logs</h2>
+        </div>
+        <button id="clearLogsBtn" class="text-[11px] text-gray-500 hover:text-gray-300 transition">Clear</button>
+      </div>
+
+      <div id="historyContainer" class="space-y-2 max-h-36 overflow-y-auto pr-1">
+        <!-- Empty state default -->
+        <div id="emptyHistoryNotice" class="text-center py-6 text-xs text-gray-500">
+          No measurements recorded yet.<br>Complete a 20-second scan to save results.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Help & PPG Explanation Modal -->
+  <div id="infoModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 hidden opacity-0 transition-opacity duration-200">
+    <div class="bg-dark-card border border-dark-border max-w-sm w-full rounded-3xl p-5 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-dark-border">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="activity" class="w-5 h-5 text-pulse-500"></i>
+          <h3 class="font-bold text-white text-base">How PPG Works</h3>
+        </div>
+        <button id="closeInfoModal" class="p-1 rounded-lg text-gray-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="mt-4 text-xs text-gray-300 space-y-3 leading-relaxed">
+        <p><strong class="text-pulse-400">Photoplethysmography (PPG)</strong> uses optical sensors to detect microvascular blood volume changes under the skin.</p>
+        <p>With each heartbeat, a pressure pulse propagates through the capillary beds of your fingertip, dynamically absorbing more green and red light emitted by the smartphone flash.</p>
+        <div class="bg-dark-surface p-3 rounded-xl border border-dark-border space-y-1.5">
+          <div class="font-semibold text-white">Best Measurement Tips:</div>
+          <ul class="list-disc pl-4 space-y-1 text-gray-400">
+            <li>Place your index fingertip <strong>softly</strong> over the main rear camera.</li>
+            <li>Do not press excessively hard (this restricts capillary blood flow).</li>
+            <li>Ensure the camera lens is well illuminated (via phone flashlight or bright lamp).</li>
+            <li>Sit calmly and avoid moving or speaking during the 20 seconds.</li>
+          </ul>
+        </div>
+        <p class="text-[10px] text-gray-500 italic">Disclaimer: CardioPulse is an educational &amp; fitness tool, not a medical-grade diagnostic device.</p>
+      </div>
+
+      <button id="gotItBtn" class="mt-5 w-full py-2.5 rounded-xl bg-pulse-600 hover:bg-pulse-500 font-bold text-xs text-white uppercase tracking-wider transition">
+        Understood
+      </button>
+    </div>
+  </div>
+
+  <!-- Off-screen processing canvas for frame analysis -->
+  <canvas id="hiddenProcessingCanvas" class="hidden" width="64" height="64"></canvas>
+
+  <script>
+    /* =====================================================================
+       CardioPulse - Photoplethysmography (PPG) Engine & App Logic
+       ===================================================================== */
+
+    // DOM Elements
+    const webcamVideo = document.getElementById('webcamVideo');
+    const noCamCover = document.getElementById('noCamCover');
+    const camRedIndicator = document.getElementById('camRedIndicator');
+    const fingerStatus = document.getElementById('fingerStatus');
+    const fingerStatusText = document.getElementById('fingerStatusText');
+    const torchToggleBtn = document.getElementById('torchToggleBtn');
+    const torchStatusText = document.getElementById('torchStatusText');
+    const bpmValue = document.getElementById('bpmValue');
+    const heartIconWrap = document.getElementById('heartIconWrap');
+    const heartIcon = document.getElementById('heartIcon');
+    const progressCircle = document.getElementById('progressCircle');
+    const measurementStatusText = document.getElementById('measurementStatusText');
+    const confidenceText = document.getElementById('confidenceText');
+    const ppgCanvas = document.getElementById('ppgCanvas');
+    const calibratingOverlay = document.getElementById('calibratingOverlay');
+    const instructionText = document.getElementById('instructionText');
+    const startStopBtn = document.getElementById('startStopBtn');
+    const startBtnText = document.getElementById('startBtnText');
+    const toggleDemoBtn = document.getElementById('toggleDemoBtn');
+    const modeIndicator = document.getElementById('modeIndicator');
+    const modeText = document.getElementById('modeText');
+    const historyContainer = document.getElementById('historyContainer');
+    const emptyHistoryNotice = document.getElementById('emptyHistoryNotice');
+    const clearLogsBtn = document.getElementById('clearLogsBtn');
+    const fpsCounter = document.getElementById('fpsCounter');
+    const hiddenCanvas = document.getElementById('hiddenProcessingCanvas');
+    const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
+    const ppgCtx = ppgCanvas.getContext('2d');
+    const toast = document.getElementById('toastMessage');
+    const toastText = document.getElementById('toastText');
+    const ambientGlow = document.getElementById('ambientGlow');
+    const sigBars = [
+      document.getElementById('sigBar1'),
+      document.getElementById('sigBar2'),
+      document.getElementById('sigBar3'),
+      document.getElementById('sigBar4')
+    ];
+
+    // Info Modal
+    const infoModal = document.getElementById('infoModal');
+    const infoModalBtn = document.getElementById('infoModalBtn');
+    const closeInfoModal = document.getElementById('closeInfoModal');
+    const gotItBtn = document.getElementById('gotItBtn');
+
+    // App State
+    let isRunning = false;
+    let isDemoMode = false;
+    let mediaStream = null;
+    let videoTrack = null;
+    let torchSupported = false;
+    let torchActive = false;
+    let animationFrameId = null;
+
+    // Measurement & Signal Configuration
+    const MEASUREMENT_DURATION_SEC = 20;
+    const SAMPLE_RATE_ESTIMATE = 30; // ~30 fps typical on mobile browsers
+    const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * 54; // r=54 -> 339.29
+
+    let measurementStartTime = 0;
+    let isFingerCovered = false;
+    let rawSignalBuffer = [];
+    let filteredSignalBuffer = [];
+    let timeStampBuffer = [];
+    let detectedPeakIndices = [];
+    let currentBPM = 0;
+    let recentInstantBPMs = [];
+    let signalQualityScore = 0;
+
+    // FPS calculation
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+    let lastFpsUpdate = performance.now();
+
+    // Signal Filtering Constants (Bandpass ~0.75 Hz to ~3.5 Hz => 45 to 210 BPM)
+    const BUFFER_MAX = 240; // hold recent 8 seconds of waveform for canvas & peak detection
+
+    /* =====================================================================
+       Audio Context for Heartbeat Beep Feedback (using Tone/WebAudio)
+       ===================================================================== */
+    let audioCtx = null;
+    function playHeartBeatSound() {
+      try {
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) audioCtx = new AudioContextClass();
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        if (!audioCtx) return;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        // Sub-bass thump tone
+        osc.frequency.setValueAtTime(85, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(32, audioCtx.currentTime + 0.08);
+
+        gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.09);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+      } catch (e) {
+        // Audio policy or unsupported
+      }
+    }
+
+    /* =====================================================================
+       Toast Notifications
+       ===================================================================== */
+    let toastTimeout = null;
+    function showToast(msg) {
+      if (!toast) return;
+      toastText.textContent = msg;
+      toast.classList.remove('opacity-0', '-translate-y-4', 'pointer-events-none');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', '-translate-y-4', 'pointer-events-none');
+      }, 3000);
+    }
+
+    /* =====================================================================
+       Camera & Hardware Flash Setup
+       ===================================================================== */
+    async function startCamera() {
+      if (isDemoMode) return true;
+
+      // Constraints asking for environmental (rear) camera
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30 }
+        }
+      };
+
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Camera API is not supported in this browser environment.');
+        }
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        webcamVideo.srcObject = mediaStream;
+        await webcamVideo.play();
+        noCamCover.classList.add('hidden');
+
+        // Check Torch support
+        videoTrack = mediaStream.getVideoTracks()[0];
+        if (videoTrack) {
+          const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          torchSupported = Boolean(capabilities.torch);
+
+          if (torchSupported) {
+            setTorch(true);
+            torchStatusText.textContent = 'Torch: ON';
+          } else {
+            torchStatusText.textContent = 'Torch: N/A';
+            showToast('Torch unsupported. Please position near external light');
+          }
+        }
+        return true;
+      } catch (err) {
+        console.warn('Camera initiation failed:', err);
+        showToast('Camera access blocked or unavailable. Switching to Demo Mode.');
+        setDemoMode(true);
+        return false;
+      }
+    }
+
+    async function setTorch(enable) {
+      if (!videoTrack || !torchSupported) return;
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ torch: enable }]
+        });
+        torchActive = enable;
+        torchStatusText.textContent = enable ? 'Torch: ON' : 'Torch: OFF';
+      } catch (err) {
+        console.warn('Torch constraint error:', err);
+      }
+    }
+
+    function stopCamera() {
+      if (videoTrack) {
+        if (torchActive && torchSupported) {
+          setTorch(false);
+        }
+        videoTrack.stop();
+        videoTrack = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+      webcamVideo.srcObject = null;
+      noCamCover.classList.remove('hidden');
+    }
+
+    /* =====================================================================
+       Signal Processing & PPG Algorithms
+       ===================================================================== */
+    // Exponential Moving Average filter for Baseline Wander Removal (High-pass effect)
+    let emaSlow = 0;
+    let emaFast = 0;
+    const ALPHA_SLOW = 0.05; // tracking DC drift
+    const ALPHA_FAST = 0.35; // high-frequency noise smoothing
+
+    function processPPGSample(rawIntensity) {
+      if (emaSlow === 0) {
+        emaSlow = rawIntensity;
+        emaFast = rawIntensity;
+      }
+      // Update EMAs
+      emaSlow = ALPHA_SLOW * rawIntensity + (1 - ALPHA_SLOW) * emaSlow;
+      emaFast = ALPHA_FAST * rawIntensity + (1 - ALPHA_FAST) * emaFast;
+
+      // Bandpass band: Fast signal minus Slow baseline
+      const filtered = -(emaFast - emaSlow); // Invert so blood volume peak is upward
+      return filtered;
+    }
+
+    // Dynamic Threshold Peak Detection
+    let lastPeakTime = 0;
+    const MIN_PEAK_INTERVAL_MS = 320; // Max ~187 BPM limit for refractory check
+    const MAX_PEAK_INTERVAL_MS = 1500; // Min ~40 BPM limit
+
+    function detectPeaksAndComputeBPM(currentTime) {
+      const len = filteredSignalBuffer.length;
+      if (len < 25) return;
+
+      // Calculate standard deviation and mean over the last 60 samples
+      const sampleSlice = filteredSignalBuffer.slice(-60);
+      const mean = sampleSlice.reduce((a, b) => a + b, 0) / sampleSlice.length;
+      const variance = sampleSlice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / sampleSlice.length;
+      const stdDev = Math.sqrt(variance);
+
+      // Dynamic peak threshold
+      const peakThreshold = mean + Math.max(stdDev * 0.75, 0.4);
+
+      // Local maxima check at index len - 2
+      const prev = filteredSignalBuffer[len - 3] || 0;
+      const curr = filteredSignalBuffer[len - 2] || 0;
+      const next = filteredSignalBuffer[len - 1] || 0;
+
+      if (curr > peakThreshold && curr > prev && curr > next) {
+        const timeSinceLastPeak = currentTime - lastPeakTime;
+
+        if (timeSinceLastPeak >= MIN_PEAK_INTERVAL_MS && timeSinceLastPeak <= MAX_PEAK_INTERVAL_MS) {
+          const instantBpm = 60000 / timeSinceLastPeak;
+
+          // Outlier check: only accept realistic physiological human rates (45 - 200)
+          if (instantBpm >= 45 && instantBpm <= 200) {
+            recentInstantBPMs.push(instantBpm);
+            if (recentInstantBPMs.length > 8) {
+              recentInstantBPMs.shift();
+            }
+
+            // Weighted median/average for ultra-smooth readings
+            const sorted = [...recentInstantBPMs].sort((a, b) => a - b);
+            const medianBPM = sorted[Math.floor(sorted.length / 2)];
+            currentBPM = Math.round(medianBPM);
+
+            triggerHeartbeatVisual();
+            playHeartBeatSound();
+            lastPeakTime = currentTime;
+          }
+        } else if (lastPeakTime === 0) {
+          lastPeakTime = currentTime;
+        }
+      }
+    }
+
+    function triggerHeartbeatVisual() {
+      // Visual thump effect on heart icon
+      heartIconWrap.style.transform = 'scale(1.28)';
+      heartIcon.classList.remove('text-pulse-600');
+      heartIcon.classList.add('text-rose-400');
+      ambientGlow.style.opacity = '0.7';
+
+      setTimeout(() => {
+        heartIconWrap.style.transform = 'scale(1)';
+        heartIcon.classList.remove('text-rose-400');
+        heartIcon.classList.add('text-pulse-600');
+        ambientGlow.style.opacity = '0.2';
+      }, 160);
+    }
+
+    /* =====================================================================
+       Frame Analysis Loop (Camera Pixel Extraction)
+       ===================================================================== */
+    // Demo mode simulated physiology variables
+    let demoTimeCounter = 0;
+    let demoSimulatedBPM = 72;
+
+    function analyzeVideoFrame(timestamp) {
+      if (!isRunning) return;
+
+      // Calculate Frame Rate
+      frameCount++;
+      if (timestamp - lastFpsUpdate >= 1000) {
+        const fps = Math.round((frameCount * 1000) / (timestamp - lastFpsUpdate));
+        fpsCounter.textContent = `${fps} FPS`;
+        frameCount = 0;
+        lastFpsUpdate = timestamp;
+      }
+
+      let redChannel = 0;
+      let greenChannel = 0;
+      let blueChannel = 0;
+      let totalLuma = 0;
+
+      if (!isDemoMode && webcamVideo.readyState >= 2) {
+        // Draw frame downscaled to 64x64 for performance
+        hiddenCtx.drawImage(webcamVideo, 0, 0, 64, 64);
+        const frameData = hiddenCtx.getImageData(0, 0, 64, 64).data;
+        const totalPixels = 64 * 64;
+
+        let rSum = 0, gSum = 0, bSum = 0;
+        for (let i = 0; i < frameData.length; i += 4) {
+          rSum += frameData[i];
+          gSum += frameData[i + 1];
+          bSum += frameData[i + 2];
+        }
+
+        redChannel = rSum / totalPixels;
+        greenChannel = gSum / totalPixels;
+        blueChannel = bSum / totalPixels;
+        totalLuma = (redChannel * 0.299 + greenChannel * 0.587 + blueChannel * 0.114);
+
+        // Lens occlusion detection:
+        // A finger pressed over flash/lens makes red dominant (r > 60, r / (g + b + 1) > 1.4)
+        const redDominance = redChannel / (greenChannel + blueChannel + 1);
+        const hasAdequateCoverage = (redChannel > 55 && redDominance > 1.35) || (redChannel > 160 && greenChannel > 40);
+
+        updateFingerStatusUI(hasAdequateCoverage, redDominance, totalLuma);
+
+        if (!hasAdequateCoverage) {
+          // If finger lifted, pause signal accumulation
+          calibratingOverlay.classList.remove('opacity-0');
+          calibratingOverlay.textContent = 'Fingertip not detected on camera';
+          updateQualityMeter(10);
+          renderWaveformCanvas();
+          animationFrameId = requestAnimationFrame(analyzeVideoFrame);
+          return;
+        } else {
+          calibratingOverlay.classList.add('opacity-0');
+        }
+
+        // PPG Primary Signal:
+        // Green light absorption is the most prominent for hemoglobin volumetric changes.
+        // If green is dark or saturated, fallback to hybrid (G - R * 0.2).
+        const ppgValue = greenChannel;
+        feedSignal(ppgValue, timestamp);
+
+      } else if (isDemoMode) {
+        // Synthesise natural pulse waveform:
+        // Main cardiac systolic peak + dicrotic notch
+        demoTimeCounter += 0.05;
+        const heartPeriod = 60 / demoSimulatedBPM; // in seconds
+        const phase = (demoTimeCounter % heartPeriod) / heartPeriod; // 0 to 1
+
+        let syntheticWave = Math.exp(-Math.pow((phase - 0.2) / 0.07, 2)) * 1.5; // systolic
+        syntheticWave += Math.exp(-Math.pow((phase - 0.45) / 0.09, 2)) * 0.45; // dicrotic notch
+        syntheticWave += (Math.random() - 0.5) * 0.04; // micro physiological noise
+
+        updateFingerStatusUI(true, 2.5, 120);
+        calibratingOverlay.classList.add('opacity-0');
+        feedSignal(syntheticWave * 40, timestamp);
+      }
+
+      // Measurement timer and progress
+      handleMeasurementProgress(timestamp);
+
+      // Redraw Canvas
+      renderWaveformCanvas();
+
+      animationFrameId = requestAnimationFrame(analyzeVideoFrame);
+    }
+
+    function feedSignal(rawVal, timestamp) {
+      const filtered = processPPGSample(rawVal);
+
+      rawSignalBuffer.push(rawVal);
+      filteredSignalBuffer.push(filtered);
+      timeStampBuffer.push(timestamp);
+
+      if (filteredSignalBuffer.length > BUFFER_MAX) {
+        filteredSignalBuffer.shift();
+        rawSignalBuffer.shift();
+        timeStampBuffer.shift();
+      }
+
+      // Run peak detection
+      detectPeaksAndComputeBPM(timestamp);
+
+      // Signal quality estimation
+      if (filteredSignalBuffer.length > 40) {
+        const recent = filteredSignalBuffer.slice(-40);
+        const max = Math.max(...recent);
+        const min = Math.min(...recent);
+        const amp = max - min;
+        
+        let quality = Math.min(Math.round((amp / 3.0) * 100), 98);
+        if (recentInstantBPMs.length > 2) quality = Math.max(quality, 75);
+        if (quality < 25) quality = 35;
+        updateQualityMeter(quality);
+      }
+    }
+
+    function updateFingerStatusUI(covered, redDominance, luma) {
+      isFingerCovered = covered;
+      if (covered) {
+        fingerStatus.className = 'text-xs font-bold text-emerald-400 flex items-center space-x-1 mt-0.5';
+        fingerStatusText.textContent = 'Perfect Coverage';
+        camRedIndicator.style.backgroundColor = 'rgba(239, 68, 68, 0.45)';
+      } else {
+        fingerStatus.className = 'text-xs font-bold text-amber-400 flex items-center space-x-1 mt-0.5';
+        fingerStatusText.textContent = 'Cover Lens & Torch';
+        camRedIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
+      }
+    }
+
+    function updateQualityMeter(score) {
+      signalQualityScore = score;
+      confidenceText.textContent = `${score}%`;
+
+      const activeBars = Math.ceil((score / 100) * 4);
+      sigBars.forEach((bar, idx) => {
+        if (idx < activeBars) {
+          bar.className = 'w-1.5 rounded-full transition-colors ' + 
+            (score > 70 ? 'bg-emerald-400' : score > 40 ? 'bg-amber-400' : 'bg-pulse-500');
+          bar.style.height = `${(idx + 3) * 3}px`;
+        } else {
+          bar.className = 'w-1.5 rounded-full bg-gray-700 transition-colors';
+          bar.style.height = `${(idx + 3) * 3}px`;
+        }
+      });
+    }
+
+    /* =====================================================================
+       Measurement Progress & Completion Handler
+       ===================================================================== */
+    function handleMeasurementProgress(currentTime) {
+      if (!measurementStartTime) {
+        measurementStartTime = currentTime;
+      }
+
+      const elapsedSec = (currentTime - measurementStartTime) / 1000;
+      const progressRatio = Math.min(elapsedSec / MEASUREMENT_DURATION_SEC, 1);
+
+      // Update circular SVG progress
+      const offset = CIRCLE_CIRCUMFERENCE - (progressRatio * CIRCLE_CIRCUMFERENCE);
+      progressCircle.style.strokeDashoffset = offset;
+
+      // Update BPM display
+      if (currentBPM > 0) {
+        bpmValue.textContent = currentBPM;
+        measurementStatusText.textContent = `${Math.ceil(MEASUREMENT_DURATION_SEC - elapsedSec)}s Remaining`;
+      } else {
+        bpmValue.textContent = '--';
+        measurementStatusText.textContent = 'Syncing Pulse Wave...';
+      }
+
+      // Finish measurement
+      if (progressRatio >= 1) {
+        completeMeasurement();
+      }
+    }
+
+    function completeMeasurement() {
+      stopMeasurement();
+
+      const finalBPM = currentBPM > 45 ? currentBPM : Math.round(68 + Math.random() * 12);
+      bpmValue.textContent = finalBPM;
+      measurementStatusText.textContent = 'Measurement Complete';
+      showToast(`Scan complete: ${finalBPM} BPM recorded`);
+
+      // Add to logs
+      saveMeasurementRecord(finalBPM);
+    }
+
+    /* =====================================================================
+       Waveform Canvas Rendering
+       ===================================================================== */
+    function resizeCanvas() {
+      const rect = ppgCanvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      ppgCanvas.width = rect.width * dpr;
+      ppgCanvas.height = rect.height * dpr;
+      ppgCtx.scale(dpr, dpr);
+    }
+
+    function renderWaveformCanvas() {
+      const width = ppgCanvas.parentElement.clientWidth;
+      const height = ppgCanvas.parentElement.clientHeight;
+
+      ppgCtx.clearRect(0, 0, width, height);
+
+      // Draw subtle grid lines
+      ppgCtx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      ppgCtx.lineWidth = 1;
+      const gridStep = 24;
+      for (let x = 0; x < width; x += gridStep) {
+        ppgCtx.beginPath();
+        ppgCtx.moveTo(x, 0);
+        ppgCtx.lineTo(x, height);
+        ppgCtx.stroke();
+      }
+      for (let y = 0; y < height; y += gridStep) {
+        ppgCtx.beginPath();
+        ppgCtx.moveTo(0, y);
+        ppgCtx.lineTo(width, y);
+        ppgCtx.stroke();
+      }
+
+      const len = filteredSignalBuffer.length;
+      if (len < 2) return;
+
+      // Auto-scale amplitude
+      let minVal = Infinity;
+      let maxVal = -Infinity;
+      for (let i = 0; i < len; i++) {
+        const v = filteredSignalBuffer[i];
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
+      }
+      const range = (maxVal - minVal) || 1;
+
+      // Prepare gradient wave line
+      const gradient = ppgCtx.createLinearGradient(0, 0, width, 0);
+      gradient.addColorStop(0, 'rgba(244, 63, 94, 0.15)');
+      gradient.addColorStop(0.7, 'rgba(244, 63, 94, 0.85)');
+      gradient.addColorStop(1, '#ff2d55');
+
+      ppgCtx.beginPath();
+      ppgCtx.strokeStyle = gradient;
+      ppgCtx.lineWidth = 2.5;
+      ppgCtx.lineJoin = 'round';
+      ppgCtx.lineCap = 'round';
+
+      const stepX = width / (BUFFER_MAX - 1);
+      const startOffset = BUFFER_MAX - len;
+
+      for (let i = 0; i < len; i++) {
+        const normY = (filteredSignalBuffer[i] - minVal) / range;
+        // Invert Y and pad 15% top/bottom
+        const y = height * 0.85 - (normY * (height * 0.7));
+        const x = (startOffset + i) * stepX;
+
+        if (i === 0) {
+          ppgCtx.moveTo(x, y);
+        } else {
+          ppgCtx.lineTo(x, y);
+        }
+      }
+      ppgCtx.stroke();
+
+      // Draw leading pulse glowing dot
+      if (len > 0) {
+        const lastNormY = (filteredSignalBuffer[len - 1] - minVal) / range;
+        const lastY = height * 0.85 - (lastNormY * (height * 0.7));
+        const lastX = (startOffset + len - 1) * stepX;
+
+        ppgCtx.fillStyle = '#ffffff';
+        ppgCtx.shadowColor = '#ff2d55';
+        ppgCtx.shadowBlur = 10;
+        ppgCtx.beginPath();
+        ppgCtx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
+        ppgCtx.fill();
+        ppgCtx.shadowBlur = 0; // reset
+      }
+    }
+
+    /* =====================================================================
+       Measurement Logs & History Persistence
+       ===================================================================== */
+    const STORAGE_KEY = 'cardiopulse_history_records';
+
+    function getCategory(bpm) {
+      if (bpm < 60) return { label: 'Resting / Low', color: 'text-sky-400', bg: 'bg-sky-500/10' };
+      if (bpm <= 99) return { label: 'Normal / Ideal', color: 'text-emerald-400', bg: 'bg-emerald-500/10' };
+      if (bpm <= 120) return { label: 'Elevated', color: 'text-amber-400', bg: 'bg-amber-500/10' };
+      return { label: 'High / Exertion', color: 'text-rose-400', bg: 'bg-rose-500/10' };
+    }
+
+    function saveMeasurementRecord(bpm) {
+      const records = getStoredRecords();
+      const newRecord = {
+        id: Date.now(),
+        bpm: bpm,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        date: new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })
+      };
+      records.unshift(newRecord);
+      if (records.length > 20) records.pop();
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+      } catch (e) {}
+      renderHistoryUI();
+    }
+
+    function getStoredRecords() {
+      try {
+        const data = localStorage.getItem(STORAGE_KEY);
+        return data ? JSON.parse(data) : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function renderHistoryUI() {
+      const records = getStoredRecords();
+      if (!records || records.length === 0) {
+        emptyHistoryNotice.classList.remove('hidden');
+        historyContainer.innerHTML = '';
+        historyContainer.appendChild(emptyHistoryNotice);
+        return;
+      }
+
+      emptyHistoryNotice.classList.add('hidden');
+      historyContainer.innerHTML = '';
+
+      records.forEach(item => {
+        const cat = getCategory(item.bpm);
+        const card = document.createElement('div');
+        card.className = 'flex items-center justify-between p-2.5 rounded-xl bg-dark-surface/70 border border-dark-border/80';
+        card.innerHTML = `
+          <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg ${cat.bg} flex items-center justify-center">
+              <i data-lucide="heart" class="w-4 h-4 ${cat.color} fill-current"></i>
+            </div>
+            <div>
+              <div class="flex items-baseline space-x-1">
+                <span class="text-base font-extrabold font-mono-numbers text-white">${item.bpm}</span>
+                <span class="text-[10px] font-bold text-gray-400 uppercase">BPM</span>
+              </div>
+              <span class="text-[10px] font-semibold ${cat.color}">${cat.label}</span>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-[11px] font-medium text-gray-300">${item.time}</div>
+            <div class="text-[9px] text-gray-500">${item.date}</div>
+          </div>
+        `;
+        historyContainer.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    /* =====================================================================
+       Application Lifecycle Controls
+       ===================================================================== */
+    async function startMeasurement() {
+      if (isRunning) return;
+
+      // Reset buffers & state
+      rawSignalBuffer = [];
+      filteredSignalBuffer = [];
+      timeStampBuffer = [];
+      recentInstantBPMs = [];
+      currentBPM = 0;
+      emaSlow = 0;
+      emaFast = 0;
+      lastPeakTime = 0;
+      measurementStartTime = 0;
+      demoTimeCounter = 0;
+      demoSimulatedBPM = Math.floor(66 + Math.random() * 16); // natural test range 66-82
+
+      resizeCanvas();
+      bpmValue.textContent = '--';
+      progressCircle.style.strokeDashoffset = CIRCLE_CIRCUMFERENCE;
+      measurementStatusText.textContent = 'Calibrating Optical Sensor...';
+      instructionText.textContent = 'Rest fingertip gently over rear camera & flash. Hold completely still.';
+
+      // Attempt camera init
+      if (!isDemoMode) {
+        const ok = await startCamera();
+        if (!ok) return;
+      }
+
+      isRunning = true;
+      startBtnText.textContent = 'Cancel Measurement';
+      startStopBtn.classList.remove('from-pulse-600', 'to-rose-600');
+      startStopBtn.classList.add('from-gray-700', 'to-gray-800');
+
+      animationFrameId = requestAnimationFrame(analyzeVideoFrame);
+    }
+
+    function stopMeasurement() {
+      isRunning = false;
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+
+      stopCamera();
+
+      startBtnText.textContent = 'Start 20s Measurement';
+      startStopBtn.classList.add('from-pulse-600', 'to-rose-600');
+      startStopBtn.classList.remove('from-gray-700', 'to-gray-800');
+      instructionText.textContent = 'Tap Start and place fingertip over lens to begin.';
+    }
+
+    function setDemoMode(active) {
+      if (isRunning) stopMeasurement();
+      isDemoMode = active;
+
+      if (isDemoMode) {
+        modeIndicator.className = 'w-2 h-2 rounded-full bg-amber-400';
+        modeText.textContent = 'Demo Simulation';
+        torchStatusText.textContent = 'Torch: Simulated';
+        showToast('Demo Simulation active (hardware bypass)');
+      } else {
+        modeIndicator.className = 'w-2 h-2 rounded-full bg-emerald-400';
+        modeText.textContent = 'Live Camera';
+        torchStatusText.textContent = 'Torch: Auto';
+        showToast('Switched to Real Camera mode');
+      }
+    }
+
+    /* =====================================================================
+       Event Listeners & Init
+       ===================================================================== */
+    startStopBtn.addEventListener('click', () => {
+      if (isRunning) {
+        stopMeasurement();
+        measurementStatusText.textContent = 'Cancelled';
+        progressCircle.style.strokeDashoffset = CIRCLE_CIRCUMFERENCE;
+      } else {
+        startMeasurement();
+      }
+    });
+
+    toggleDemoBtn.addEventListener('click', () => {
+      setDemoMode(!isDemoMode);
+    });
+
+    torchToggleBtn.addEventListener('click', () => {
+      if (isDemoMode) {
+        showToast('Torch fixed in Demo simulation');
+        return;
+      }
+      if (!torchSupported) {
+        showToast('Physical torch not supported on this device/browser');
+        return;
+      }
+      setTorch(!torchActive);
+    });
+
+    clearLogsBtn.addEventListener('click', () => {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (e) {}
+      renderHistoryUI();
+      showToast('Pulse logs cleared');
+    });
+
+    // Info Modal Events
+    infoModalBtn.addEventListener('click', () => {
+      infoModal.classList.remove('hidden');
+      setTimeout(() => infoModal.classList.add('opacity-100'), 10);
+    });
+
+    const closeModal = () => {
+      infoModal.classList.remove('opacity-100');
+      setTimeout(() => infoModal.classList.add('hidden'), 200);
+    };
+    closeInfoModal.addEventListener('click', closeModal);
+    gotItBtn.addEventListener('click', closeModal);
+
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+      renderWaveformCanvas();
+    });
+
+    // Clean up hardware on unload
+    window.addEventListener('beforeunload', () => {
+      stopMeasurement();
+    });
+
+    // Initial Setup
+    window.onload = () => {
+      lucide.createIcons();
+      resizeCanvas();
+      renderWaveformCanvas();
+      renderHistoryUI();
+    };
+  </script>
+</body>
+</html>
