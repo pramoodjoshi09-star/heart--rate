@@ -20,11 +20,11 @@
     }
   </style>
 </head>
-<body class="bg-slate-950 text-white min-h-screen flex flex-col items-center justify-center p-4 selection:bg-rose-500">
+<body class="bg-slate-950 text-white min-h-screen flex flex-col items-center justify-center p-4">
 
   <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col items-center">
     
-    <!-- Red Heart Logo & Dr. Heart Title -->
+    <!-- Red Heart Logo & Header -->
     <div class="flex flex-col items-center gap-1.5 mb-4">
       <div class="relative flex items-center justify-center my-1">
         <span id="heartIcon" class="text-5xl heart-pump filter drop-shadow-[0_0_16px_rgba(239,68,68,0.7)]">❤️</span>
@@ -35,12 +35,12 @@
       <span class="text-[11px] text-slate-400 font-medium tracking-wide">Optical PPG Heart Rate Monitor</span>
     </div>
 
-    <!-- Hidden Camera & Offscreen Processing Canvas -->
+    <!-- Hidden Video & Processing Canvas -->
     <video id="webcam" playsinline autoplay class="hidden"></video>
     <canvas id="procCanvas" width="40" height="40" class="hidden"></canvas>
 
     <!-- Pulse Waveform Viewport -->
-    <div class="w-full bg-slate-950 rounded-2xl border border-slate-800 p-2 mb-5 relative overflow-hidden">
+    <div class="w-full bg-slate-950 rounded-2xl border border-slate-800 p-2 mb-4 relative overflow-hidden">
       <canvas id="waveCanvas" width="300" height="90" class="w-full h-24 block"></canvas>
       <div id="statusBadge" class="absolute top-2 right-2 text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
         Ready
@@ -48,7 +48,7 @@
     </div>
 
     <!-- Live BPM Metric -->
-    <div class="text-center my-3">
+    <div class="text-center my-2">
       <div class="flex items-baseline justify-center gap-1.5">
         <span id="bpmValue" class="text-6xl font-black tracking-tighter text-slate-100">--</span>
         <span class="text-sm font-semibold text-rose-500">BPM</span>
@@ -56,7 +56,16 @@
       <p id="instructionText" class="text-xs text-slate-400 mt-2">Rest phone flat on a table, touch camera lightly</p>
     </div>
 
-    <!-- Control Button -->
+    <!-- Real-time Pulse Flash Indicator -->
+    <div class="w-full bg-slate-950/80 rounded-xl px-4 py-2 mt-3 flex items-center justify-between border border-slate-800 text-xs">
+      <span class="text-slate-400">Pulse Beat:</span>
+      <div class="flex items-center gap-2">
+        <span id="beatDot" class="w-3 h-3 rounded-full bg-slate-700 transition-colors duration-150"></span>
+        <span id="beatCount" class="text-slate-300 font-mono text-[11px]">0 beats</span>
+      </div>
+    </div>
+
+    <!-- Action Button -->
     <button id="toggleBtn" class="w-full mt-4 py-3.5 rounded-xl font-semibold bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all shadow-lg shadow-rose-600/30">
       Start Measurement
     </button>
@@ -73,6 +82,8 @@
     const statusBadge = document.getElementById('statusBadge');
     const toggleBtn = document.getElementById('toggleBtn');
     const heartIcon = document.getElementById('heartIcon');
+    const beatDot = document.getElementById('beatDot');
+    const beatCount = document.getElementById('beatCount');
 
     let stream = null;
     let track = null;
@@ -80,10 +91,12 @@
     let animFrame = null;
 
     let wavePoints = new Array(80).fill(45);
-    let rawHistory = [];
-    let rollingBPMs = [];
+    let signalHistory = [];
+    let beatIntervals = [];
+    let totalDetectedBeats = 0;
     let lastBeatTime = 0;
-    let baseline = 0;
+    let emaBaseline = 0;
+    let dynamicThreshold = 0.15;
 
     toggleBtn.addEventListener('click', async () => {
       if (!isRunning) {
@@ -122,8 +135,8 @@
         isRunning = true;
         toggleBtn.textContent = 'Stop Measurement';
         toggleBtn.classList.replace('bg-rose-600', 'bg-slate-700');
-        instructionText.textContent = 'Place fingertip very gently over the lens';
-        statusBadge.textContent = 'Calibrating...';
+        instructionText.textContent = 'Cover the camera lens gently';
+        statusBadge.textContent = 'Detecting...';
         statusBadge.className = 'absolute top-2 right-2 text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400';
 
         resetState();
@@ -147,11 +160,15 @@
     }
 
     function resetState() {
-      rawHistory = [];
-      rollingBPMs = [];
+      signalHistory = [];
+      beatIntervals = [];
+      totalDetectedBeats = 0;
       lastBeatTime = 0;
-      baseline = 0;
+      emaBaseline = 0;
+      dynamicThreshold = 0.15;
       bpmValue.textContent = '--';
+      beatCount.textContent = '0 beats';
+      beatDot.classList.replace('bg-rose-500', 'bg-slate-700');
     }
 
     function processFrame() {
@@ -174,20 +191,23 @@
         const avgG = gTotal / totalPixels;
         const avgB = bTotal / totalPixels;
 
-        // Fingertip detection
-        const isFingerCovered = avgR > 60 && avgR > (avgG + avgB) * 1.15;
+        // More forgiving finger-contact check:
+        // Ensures finger is resting and light is blocked, without false rejects
+        const isCovered = avgR > 40 && (avgR > avgG || avgR > avgB);
 
-        if (!isFingerCovered) {
+        if (!isCovered) {
           statusBadge.textContent = 'No Finger';
           statusBadge.className = 'absolute top-2 right-2 text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400';
-          instructionText.textContent = 'Cover the camera and flash gently';
+          instructionText.textContent = 'Place fingertip over lens and flash';
           drawWaveform(45);
         } else {
           statusBadge.textContent = 'Tracking';
           statusBadge.className = 'absolute top-2 right-2 text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400';
-          instructionText.textContent = 'Hold still... reading pulse';
+          instructionText.textContent = 'Hold steady... calculating pulse';
 
-          analyzeSignal(avgG);
+          // Blend Green and Red channels for optimal PPG amplitude across all sensors
+          const signal = (avgG * 0.7) + (avgR * 0.3);
+          analyzeSignal(signal);
         }
       }
 
@@ -197,41 +217,57 @@
     function analyzeSignal(rawVal) {
       const now = performance.now();
 
-      if (baseline === 0) baseline = rawVal;
-      baseline = 0.94 * baseline + 0.06 * rawVal;
-      const filtered = rawVal - baseline;
+      // Exponential moving average for baseline removal
+      if (emaBaseline === 0) emaBaseline = rawVal;
+      emaBaseline = 0.92 * emaBaseline + 0.08 * rawVal;
+      const filtered = rawVal - emaBaseline;
 
-      rawHistory.push({ time: now, val: filtered });
-      if (rawHistory.length > 90) rawHistory.shift();
+      signalHistory.push({ time: now, val: filtered });
+      if (signalHistory.length > 75) signalHistory.shift();
 
-      const normalizedY = 45 - (filtered * 25);
-      drawWaveform(Math.max(10, Math.min(80, normalizedY)));
+      // Waveform display
+      const normalizedY = 45 - (filtered * 18);
+      drawWaveform(Math.max(8, Math.min(82, normalizedY)));
 
-      if (rawHistory.length < 30) return;
+      if (signalHistory.length < 25) return;
 
-      const idx = rawHistory.length - 2;
-      const prev = rawHistory[idx - 1].val;
-      const curr = rawHistory[idx].val;
-      const next = rawHistory[idx + 1].val;
+      // Adapt dynamic threshold based on recent signal range
+      const amplitudes = signalHistory.map(s => Math.abs(s.val));
+      const maxAmp = Math.max(...amplitudes);
+      dynamicThreshold = Math.max(0.12, maxAmp * 0.4);
 
-      // Systolic peak identification with physiological refractory lockout
-      if (curr > prev && curr > next && curr > 0.45) {
+      const idx = signalHistory.length - 2;
+      const prev = signalHistory[idx - 1].val;
+      const curr = signalHistory[idx].val;
+      const next = signalHistory[idx + 1].val;
+
+      // Peak detection with adaptive threshold
+      if (curr > prev && curr > next && curr > dynamicThreshold) {
         const beatInterval = now - lastBeatTime;
 
-        if (beatInterval > 430 && beatInterval < 1400) {
-          const instantBPM = 60000 / beatInterval;
+        // Valid physiological interval: 400ms (150 BPM) to 1400ms (43 BPM)
+        if (beatInterval > 400 && beatInterval < 1400) {
+          totalDetectedBeats++;
+          beatCount.textContent = `${totalDetectedBeats} beats`;
 
-          rollingBPMs.push(instantBPM);
-          if (rollingBPMs.length > 7) rollingBPMs.shift();
+          // Flash the beat dot
+          beatDot.classList.replace('bg-slate-700', 'bg-rose-500');
+          setTimeout(() => beatDot.classList.replace('bg-rose-500', 'bg-slate-700'), 150);
 
-          const sorted = [...rollingBPMs].sort((a, b) => a - b);
-          const medianBPM = Math.round(sorted[Math.floor(sorted.length / 2)]);
+          beatIntervals.push(beatInterval);
+          if (beatIntervals.length > 6) beatIntervals.shift();
 
-          bpmValue.textContent = medianBPM;
+          // Calculate BPM once we have at least 2 clean intervals
+          if (beatIntervals.length >= 2) {
+            const sorted = [...beatIntervals].sort((a, b) => a - b);
+            const medianInterval = sorted[Math.floor(sorted.length / 2)];
+            const calculatedBPM = Math.round(60000 / medianInterval);
 
-          // Sync heart pump rate with detected pulse
-          const cycleSeconds = (60 / medianBPM).toFixed(2);
-          heartIcon.style.animationDuration = `${cycleSeconds}s`;
+            bpmValue.textContent = calculatedBPM;
+
+            const cycleSeconds = (60 / calculatedBPM).toFixed(2);
+            heartIcon.style.animationDuration = `${cycleSeconds}s`;
+          }
 
           lastBeatTime = now;
         } else if (beatInterval >= 1400) {
