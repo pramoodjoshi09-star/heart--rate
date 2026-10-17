@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>CardioPulse Heart Monitor</title>
+  <title>Dr. Heart - Pulse Monitor</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @keyframes heartbeat {
       0% { transform: scale(1); }
-      14% { transform: scale(1.25); }
+      14% { transform: scale(1.22); }
       28% { transform: scale(1); }
-      42% { transform: scale(1.15); }
+      42% { transform: scale(1.12); }
       70% { transform: scale(1); }
     }
     .heart-pump {
@@ -24,18 +24,18 @@
 
   <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col items-center">
     
-    <!-- Pumping Heart Emoji Logo -->
-    <div class="flex flex-col items-center gap-2 mb-4">
-      <div class="relative flex items-center justify-center">
-        <span id="heartIcon" class="text-5xl heart-pump filter drop-shadow-[0_0_15px_rgba(244,63,94,0.6)]">🫀</span>
+    <!-- Red Heart Logo & Dr. Heart Title -->
+    <div class="flex flex-col items-center gap-1.5 mb-4">
+      <div class="relative flex items-center justify-center my-1">
+        <span id="heartIcon" class="text-5xl heart-pump filter drop-shadow-[0_0_16px_rgba(239,68,68,0.7)]">❤️</span>
       </div>
-      <h1 class="text-xl font-bold tracking-tight text-slate-100 flex items-center gap-1.5 mt-1">
-        CardioPulse
+      <h1 class="text-2xl font-black tracking-tight text-slate-100 flex items-center gap-1.5 mt-1">
+        Dr. Heart
       </h1>
-      <span class="text-[11px] text-slate-400 font-medium">Optical PPG Monitor</span>
+      <span class="text-[11px] text-slate-400 font-medium tracking-wide">Optical PPG Heart Rate Monitor</span>
     </div>
 
-    <!-- Hidden Camera & Processing Elements -->
+    <!-- Hidden Camera & Offscreen Processing Canvas -->
     <video id="webcam" playsinline autoplay class="hidden"></video>
     <canvas id="procCanvas" width="40" height="40" class="hidden"></canvas>
 
@@ -174,7 +174,7 @@
         const avgG = gTotal / totalPixels;
         const avgB = bTotal / totalPixels;
 
-        // Fingertip detection check
+        // Fingertip detection
         const isFingerCovered = avgR > 60 && avgR > (avgG + avgB) * 1.15;
 
         if (!isFingerCovered) {
@@ -187,7 +187,6 @@
           statusBadge.className = 'absolute top-2 right-2 text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400';
           instructionText.textContent = 'Hold still... reading pulse';
 
-          // Green channel provides highest signal-to-noise ratio
           analyzeSignal(avgG);
         }
       }
@@ -198,7 +197,6 @@
     function analyzeSignal(rawVal) {
       const now = performance.now();
 
-      // Exponential filter for dynamic baseline cancellation
       if (baseline === 0) baseline = rawVal;
       baseline = 0.94 * baseline + 0.06 * rawVal;
       const filtered = rawVal - baseline;
@@ -216,26 +214,22 @@
       const curr = rawHistory[idx].val;
       const next = rawHistory[idx + 1].val;
 
-      // Peak identification
+      // Systolic peak identification with physiological refractory lockout
       if (curr > prev && curr > next && curr > 0.45) {
         const beatInterval = now - lastBeatTime;
 
-        // Anti Double-Counting Refractory Window:
-        // Human heart rates rarely exceed 150 BPM at rest (>400 ms).
-        // 430 ms lockout specifically rejects the secondary dicrotic reflection peak.
         if (beatInterval > 430 && beatInterval < 1400) {
           const instantBPM = 60000 / beatInterval;
 
           rollingBPMs.push(instantBPM);
           if (rollingBPMs.length > 7) rollingBPMs.shift();
 
-          // Median filter to reject motion spikes
           const sorted = [...rollingBPMs].sort((a, b) => a - b);
           const medianBPM = Math.round(sorted[Math.floor(sorted.length / 2)]);
 
           bpmValue.textContent = medianBPM;
 
-          // Sync pumping heart animation speed with your live pulse
+          // Sync heart pump rate with detected pulse
           const cycleSeconds = (60 / medianBPM).toFixed(2);
           heartIcon.style.animationDuration = `${cycleSeconds}s`;
 
